@@ -1,19 +1,17 @@
 apiVersion: automation.cloudbees.io/v1alpha1
 kind: workflow
 name: build
-
 on:
   push:
     branches:
       - "**"
+  workflow_dispatch:
 env:
   application_name: ng-tekton-dispatch-service
-  
 permissions:
   scm-token-own: read
   scm-token-org: read
   id-token: write
-
 jobs:
   build:
     outputs:
@@ -22,23 +20,19 @@ jobs:
     steps:
       - name: Get source code
         uses: cloudbees-io/checkout@v1
-
       - name: Setup git credentials
         uses: cloudbees-io/configure-git-global-credentials@v1
-
       - id: build-and-lint
         name: Build and lint NG Tekton Dispatcher Service
         uses: docker://golang:1.26.0
         run: |
           echo "Go version: $(go version)"
           make build lint
-
       - id: unit-test-scan
         name: Unit tests and static code analysis
         uses: calculi-corp/cb-internal-shared-actions/go-test@go-test/v1
         with:
           min-coverage: "80"
-
       - name: Login to AWS
         if: ${{ vars.workflow_execution_env == 'production' }}
         uses: cloudbees-io/configure-aws-credentials@v1
@@ -46,12 +40,10 @@ jobs:
         with:
           aws-region: us-east-1
           role-to-assume: ${{ vars.oidc_staging_iam_role }}
-          role-duration-seconds: "3600" # optionally set the duration of the login token
-
+          role-duration-seconds: "3600"
       - name: Configure container registry for Staging ECR
         if: ${{ vars.workflow_execution_env == 'production' }}
         uses: cloudbees-io/configure-ecr-credentials@v1
-
       - id: build-container
         name: Build container image
         if: ${{ vars.workflow_execution_env == 'production' }}
@@ -62,7 +54,6 @@ jobs:
           context: ${{ cloudbees.workspace }}
           build-args: binaryDir=build/target/linux/amd64
           registry-mirrors: 020229604682.dkr.ecr.us-east-1.amazonaws.com/docker-hub
-
       - id: slsa-attestation
         name: Generate SLSA attestation
         if: ${{ vars.workflow_execution_env == 'production' }}
@@ -72,7 +63,6 @@ jobs:
           aws-role-to-assume: ${{ vars.oidc_staging_iam_role }}
           aws-region: us-east-1
           aws-kms-alias: cbp-dev-kms-key-cosign
-
       - name: Run TruffleHog Container Action
         if: ${{ vars.workflow_execution_env == 'production' }}
         uses: cloudbees-io/trufflehog-secret-scan-container@v1
@@ -80,14 +70,11 @@ jobs:
           image-location: ${{ vars.staging_image_registry }}/ng-tekton-dispatch-service
           image-tag: ${{ cloudbees.version }}
           threshold-very-high: 0
-
       - name: Get integration test dependencies
-        # This is because the test container doesn't know the git token
         if: ${{ vars.workflow_execution_env == 'production' && cloudbees.scm.branch != 'main' }}
         uses: docker://golang:1.26.0
         run: |
           go mod vendor
-
       - name: Build integration test container
         if: ${{ vars.workflow_execution_env == 'production' && cloudbees.scm.branch != 'main' }}
         uses: cloudbees-io/kaniko@v1
@@ -95,7 +82,6 @@ jobs:
           dockerfile: Dockerfile-test
           destination: ${{ vars.staging_image_registry }}/ng-tekton-dispatch-service-test:${{ cloudbees.version }}
           registry-mirrors: 020229604682.dkr.ecr.us-east-1.amazonaws.com/docker-hub
-
   deploy-dependencies:
     if: ${{ vars.workflow_execution_env == 'production' }}
     outputs:
@@ -103,25 +89,20 @@ jobs:
     steps:
       - name: Get source code
         uses: cloudbees-io/checkout@v1
-
       - name: Setup git credentials
         uses: cloudbees-io/configure-git-global-credentials@v1
-
       - name: Login to AWS
         uses: cloudbees-io/configure-aws-credentials@v1
         id: aws-login
         with:
           aws-region: us-east-1
           role-to-assume: ${{ vars.oidc_staging_iam_role }}
-          role-duration-seconds: "3600" # optionally set the duration of the login token
-
+          role-duration-seconds: "3600"
       - name: Configure container registry for Staging ECR
         uses: cloudbees-io/configure-ecr-credentials@v1
-
       - uses: cloudbees-io/configure-eks-credentials@v1
         with:
           name: ${{ vars.staging_east_cluster_name }}
-
       - id: createns
         name: Create Kubernetes Namespace
         uses: cloudbees-io/create-k8s-namespace@v1
@@ -130,7 +111,6 @@ jobs:
           sanitize-name: ${{ cloudbees.scm.branch != 'main' }}
           labels: |
             cloudbees.io/cleanup: "${{ cloudbees.scm.branch != 'main' }}"
-
       - id: install-nats
         name: Install NATS
         if: ${{ cloudbees.scm.branch != 'main' }}
@@ -138,19 +118,17 @@ jobs:
         with:
           namespace: ${{ steps.createns.outputs.name }}
           chart-location: oci://${{ vars.staging_chart_registry }}/nats
-
       - id: install-auth-service
         name: Install auth-service helm chart
         if: ${{ cloudbees.scm.branch != 'main' }}
         uses: https://github.com/calculi-corp/auth-service/actions/deploy:main
         with:
-          chart-location:  oci://${{ vars.staging_chart_registry }}/auth-service
+          chart-location: oci://${{ vars.staging_chart_registry }}/auth-service
           registry: ${{ vars.staging_image_registry }}
           namespace: ${{ steps.createns.outputs.name }}
           chart-registry: ${{ vars.staging_chart_registry }}
           nats-username: ${{ secrets.NATS_USERNAME }}
           nats-password: ${{ secrets.NATS_PASSWORD }}
-
       - id: install-chart
         name: Install secret-service helm chart
         if: ${{ cloudbees.scm.branch != 'main' }}
@@ -161,7 +139,6 @@ jobs:
           vault-chart-location: oci://${{ vars.staging_chart_registry }}/cloudbees-vault
           vault-watchdog-chart-location: oci://${{ vars.staging_chart_registry }}/cloudbees-vault-watchdog
           namespace: ${{ steps.createns.outputs.name }}
-
       - id: install-db-service
         name: Install db-service
         if: ${{ cloudbees.scm.branch != 'main' }}
@@ -171,7 +148,6 @@ jobs:
           chart-location: oci://${{ vars.staging_chart_registry }}/db-service
           registry: ${{ vars.staging_image_registry }}
           cassandra-ssl-host-verification: "false"
-
       - id: install-endpoint-service
         name: Install endpoint-service
         if: ${{ cloudbees.scm.branch != 'main' }}
@@ -184,19 +160,17 @@ jobs:
           application-name: endpoint-service
           nats-username: ${{ secrets.NATS_USERNAME }}
           nats-password: ${{ secrets.NATS_PASSWORD }}
-
       - id: install-rbac-service
         name: Install rbac-service helm chart
         if: ${{ cloudbees.scm.branch != 'main' }}
         uses: https://github.com/calculi-corp/rbac-service/actions/deploy:main
         with:
-          chart-location:  oci://${{ vars.staging_chart_registry }}/rbac-service
+          chart-location: oci://${{ vars.staging_chart_registry }}/rbac-service
           registry: ${{ vars.staging_image_registry }}
           namespace: ${{ steps.createns.outputs.name }}
           chart-registry: ${{ vars.staging_chart_registry }}
           nats-username: ${{ secrets.NATS_USERNAME }}
           nats-password: ${{ secrets.NATS_PASSWORD }}
-
       - id: install-entitle-srv
         name: Install entitlement-service helm chart
         if: ${{ cloudbees.scm.branch != 'main' }}
@@ -205,7 +179,6 @@ jobs:
           namespace: ${{ steps.createns.outputs.name }}
           registry: ${{ vars.staging_image_registry }}
           chart-location: oci://${{ vars.staging_chart_registry }}/entitlement-service
-
       - id: install-postgres
         name: Install PostgreSQL
         if: ${{ cloudbees.scm.branch != 'main' }}
@@ -213,7 +186,6 @@ jobs:
         with:
           namespace: ${{ steps.createns.outputs.name }}
           chart-location: oci://020229604682.dkr.ecr.us-east-1.amazonaws.com/docker-hub/bitnamicharts/postgresql
-
       - id: install-repo-srv
         name: Install repository-service helm chart
         if: ${{ cloudbees.scm.branch != 'main' }}
@@ -226,7 +198,6 @@ jobs:
           application-name: repository-service
           nats-username: ${{ secrets.NATS_USERNAME }}
           nats-password: ${{ secrets.NATS_PASSWORD }}
-
       - name: Install tekton config
         uses: cloudbees-io/helm-install@v1
         if: ${{ cloudbees.scm.branch != 'main' }}
@@ -241,36 +212,31 @@ jobs:
             - name: tekton-preprod-us-east-1
               region: us-east-1
               kubeconfig: ${{ toJSON(secrets.tekton_staging_east_kubeconfig) }}
-
-
   publish-charts:
     if: ${{ vars.workflow_execution_env == 'production' }}
-    needs: [build]
+    needs:
+      - build
     outputs:
       chart: ${{ steps.helmpush.outputs.chart }}
       version: ${{ steps.helmpush.outputs.version }}
     steps:
       - name: Get source code
         uses: cloudbees-io/checkout@v1
-
       - name: Login to AWS
         uses: cloudbees-io/configure-aws-credentials@v1
         id: aws-login
         with:
           aws-region: us-east-1
           role-to-assume: ${{ vars.oidc_staging_iam_role }}
-          role-duration-seconds: "3600" # optionally set the duration of the login token
-
+          role-duration-seconds: "3600"
       - name: Configure container registry for Staging ECR
         uses: cloudbees-io/configure-ecr-credentials@v1
-
       - id: lint-chart
         name: Lint Helm chart
         uses: docker://alpine/helm:3.17.0
         run: |
           set -ux
           helm lint ./charts/ng-tekton-dispatch-service
-
       - id: helmpkg
         name: Package Helm chart
         uses: cloudbees-io/helm-package@v1
@@ -281,42 +247,39 @@ jobs:
             base:
               image:
                 tag: ${{ needs.build.outputs.tag }}
-
       - id: helmpush
         name: Publish Helm chart
         uses: cloudbees-io/helm-push@v1
         with:
           chart: ${{ steps.helmpkg.outputs.chart }}
           remote: oci://${{ vars.staging_chart_registry }}
-
       - name: Run TruffleHog Helm Chart Scan Action
         uses: cloudbees-io/trufflehog-secret-scan-container@v1
         with:
           image-location: ${{ vars.staging_chart_registry }}/${{ env.application_name }}
           image-tag: ${{ cloudbees.version }}${{ cloudbees.scm.branch != 'main' && '-dev' || '' }}
           threshold-very-high: 0
-
       - id: helmpkg-for-integration
         name: Package Helm chart
         uses: cloudbees-io/helm-package@v1
         with:
           chart: ./charts/ng-tekton-dispatch-service
-          version: "0.0.0+main"
+          version: 0.0.0+main
           values: |
             base:
               image:
                 tag: ${{ needs.build.outputs.tag }}
-
       - id: helmpush-for-integration
         name: Publish Helm chart
         uses: cloudbees-io/helm-push@v1
         with:
           chart: ${{ steps.helmpkg-for-integration.outputs.chart }}
           remote: oci://${{ vars.staging_chart_registry }}
-
   deploy-east-1:
     if: ${{ vars.workflow_execution_env == 'production' }}
-    needs: [publish-charts, deploy-dependencies]
+    needs:
+      - publish-charts
+      - deploy-dependencies
     steps:
       - name: Login to AWS
         uses: cloudbees-io/configure-aws-credentials@v1
@@ -324,15 +287,12 @@ jobs:
         with:
           aws-region: us-east-1
           role-to-assume: ${{ vars.oidc_staging_iam_role }}
-          role-duration-seconds: "3600" # optionally set the duration of the login token
-
+          role-duration-seconds: "3600"
       - name: Configure container registry for Staging ECR
         uses: cloudbees-io/configure-ecr-credentials@v1
-
       - uses: cloudbees-io/configure-eks-credentials@v1
         with:
           name: ${{ vars.staging_east_cluster_name }}
-
       - id: createns
         name: Create Kubernetes Namespace
         uses: cloudbees-io/create-k8s-namespace@v1
@@ -341,7 +301,6 @@ jobs:
           sanitize-name: ${{ cloudbees.scm.branch != 'main' }}
           labels: |
             cloudbees.io/cleanup: "${{ cloudbees.scm.branch != 'main' }}"
-
       - id: consulservicename
         name: Generate consul service name for the application
         uses: docker://alpine:3.21.2
@@ -350,14 +309,13 @@ jobs:
             printf %s "${{ env.application_name }}" > "$CLOUDBEES_OUTPUTS/name"
           else
             short_sha=$(printf %s "${{ cloudbees.scm.sha }}" | cut -c1-8)
-          
+
             # Map digits to letters (0→a,1→b,...9→j)
             letter_only_suffix=$(echo "$short_sha" | tr '0-9' 'abcdefghij')
-          
+
             name=$(printf %s-%s "${{ env.application_name }}" "$letter_only_suffix" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z]+/-/g' | sed -E 's/^-+|-+$//g')
             printf %s "$name" > "$CLOUDBEES_OUTPUTS/name"
           fi
-
       - id: install-chart
         name: Install ng tds helm chart
         uses: ./actions/deploy
@@ -374,22 +332,20 @@ jobs:
           datadog-env: ${{ vars.dd_target_env }}
           enable-datadog-labels: ${{ cloudbees.scm.branch == 'main' && 'true' || 'false' }}
           role-arn: arn:aws:iam::020229604682:role/ng-dispatch-role-preprod-us-east-1-platform
-
       - name: Run integration tests
         if: ${{ cloudbees.scm.branch != 'main' }}
         uses: docker://alpine/helm:3.17.0
         run: |
           helm test ng-tekton-dispatch-service --logs --timeout=25m --namespace=${{ steps.createns.outputs.name }}
-
       - name: Cleanup deployments
         if: ${{ cloudbees.scm.branch != 'main' }}
         uses: ./actions/cleanup
         with:
           namespace: ${{ steps.createns.outputs.name }}
-
   deploy-west-2:
     if: ${{ vars.workflow_execution_env == 'production' && cloudbees.scm.branch == 'main' }}
-    needs: [publish-charts]
+    needs:
+      - publish-charts
     steps:
       - name: Login to AWS us-east-1 for ECR registry access
         uses: cloudbees-io/configure-aws-credentials@v1
@@ -397,26 +353,21 @@ jobs:
         with:
           aws-region: us-east-1
           role-to-assume: ${{ vars.oidc_staging_iam_role }}
-          role-duration-seconds: "3600" # optionally set the duration of the login token
-
+          role-duration-seconds: "3600"
       - name: Configure container registry for Staging ECR us-east-1
         uses: cloudbees-io/configure-ecr-credentials@v1
-
       - name: Login to AWS
         uses: cloudbees-io/configure-aws-credentials@v1
         id: aws-login
         with:
           aws-region: us-west-2
           role-to-assume: ${{ vars.oidc_staging_iam_role }}
-          role-duration-seconds: "3600" # optionally set the duration of the login token
-
+          role-duration-seconds: "3600"
       - name: Configure container registry for Staging ECR
         uses: cloudbees-io/configure-ecr-credentials@v1
-
       - uses: cloudbees-io/configure-eks-credentials@v1
         with:
           name: ${{ vars.staging_west_cluster_name }}
-
       - id: createns
         name: Create Kubernetes Namespace
         uses: cloudbees-io/create-k8s-namespace@v1
@@ -425,7 +376,6 @@ jobs:
           sanitize-name: ${{ cloudbees.scm.branch != 'main' }}
           labels: |
             cloudbees.io/cleanup: "${{ cloudbees.scm.branch != 'main' }}"
-
       - id: consulservicename
         name: Generate consul service name for the application
         uses: docker://alpine:3.19
@@ -434,14 +384,13 @@ jobs:
             printf %s "${{ env.application_name }}" > "$CLOUDBEES_OUTPUTS/name"
           else
             short_sha=$(printf %s "${{ cloudbees.scm.sha }}" | cut -c1-8)
-          
+
             # Map digits to letters (0→a,1→b,...9→j)
             letter_only_suffix=$(echo "$short_sha" | tr '0-9' 'abcdefghij')
-          
+
             name=$(printf %s-%s "${{ env.application_name }}" "$letter_only_suffix" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z]+/-/g' | sed -E 's/^-+|-+$//g')
             printf %s "$name" > "$CLOUDBEES_OUTPUTS/name"
           fi
-
       - id: install-chart
         name: Install ng tds helm chart
         uses: ./actions/deploy
@@ -458,7 +407,6 @@ jobs:
           datadog-env: ${{ vars.dd_target_env }}
           enable-datadog-labels: ${{ cloudbees.scm.branch == 'main' && 'true' || 'false' }}
           role-arn: arn:aws:iam::020229604682:role/ng-dispatch-role-preprod-us-west-2-platform
-
       - name: Cleanup deployments
         if: ${{ cloudbees.scm.branch != 'main' }}
         uses: ./actions/cleanup
