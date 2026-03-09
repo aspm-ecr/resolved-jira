@@ -1,0 +1,63 @@
+apiVersion: automation.cloudbees.io/v1alpha1
+kind: workflow
+name: Step Expansion Test Workflow
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-dependencies:
+    steps:
+      - name: Install auth-service helm chart
+        uses: docker://alpine:latest
+        shell: sh
+        run: |
+          echo "Parent Step: Install auth-service helm chart"
+
+      - name: Generate consul service name for the application
+        uses: docker://alpine:latest
+        shell: sh
+        run: |
+          echo "Generate consul service name for auth-service"
+
+      - name: Install helm chart
+        uses: docker://alpine:latest
+        shell: sh
+        run: |
+          echo "Installing helm chart for auth-service"
+
+      - name: Install endpoint-service
+        uses: docker://alpine:latest
+        shell: sh
+        run: |
+          echo "Parent Step: Install endpoint-service"
+
+      - name: Generate consul service name for the application
+        uses: docker://alpine:latest
+        shell: sh
+        run: |
+          echo "Generate consul service name for endpoint-service"
+
+      - name: Install helm chart
+        uses: docker://alpine:latest
+        shell: sh
+        run: |
+          echo "Installing helm chart for endpoint-service"
+
+      - name: Install repository-service helm chart
+        uses: docker://alpine:latest
+        shell: sh
+        run: |
+          echo "Parent Step: Install repository-service"
+
+      - name: Generate consul service name for the application
+        uses: docker://alpine:latest
+        shell: sh
+        run: |
+          echo "Generate consul service name for repository-service"
+
+      - name: Install helm chart
+        uses: docker://alpine:latest
+        shell: sh
+        run: |
+          echo "Installing helm chart for repository-service"
