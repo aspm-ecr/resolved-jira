@@ -1,0 +1,71 @@
+apiVersion: automation.cloudbees.io/v1alpha1
+kind: workflow
+name: My workflow - Step Expansion Test
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  scm-token-own: read
+  scm-token-org: read
+  id-token: write
+
+jobs:
+  build:
+    steps:
+      - name: Parent Action One
+        uses: cloudbees-io/checkout@v1
+
+      - name: Common Step
+        uses: docker://alpine:latest
+        shell: sh
+        run: |
+          echo "Running common step under Parent Action One"
+
+      - name: Build container image
+        id: build-container
+        uses: docker://gcr.io/kaniko-project/executor:debug
+        run: |
+          /kaniko/executor \
+            --context $CLOUDBEES_WORKSPACE \
+            --dockerfile $CLOUDBEES_WORKSPACE/Dockerfile \
+            --tar-path $CLOUDBEES_WORKSPACE/container-image.tar \
+            --no-push
+
+      - name: Common Step
+        uses: docker://alpine:latest
+        shell: sh
+        run: |
+          echo "Running common step under Build container image"
+
+      - name: Register the artifact
+        id: register-artifact
+        uses: cloudbees-io/register-build-artifact@v2
+        with:
+          name: qa-go-repo
+          version: 0.1
+          url: 020229604682.dkr.ecr.us-east-1.amazonaws.com/throwaway/actions/vulnerable-image:0.1
+
+      - name: Common Step
+        uses: docker://alpine:latest
+        shell: sh
+        run: |
+          echo "Running common step under Register artifact"
+
+      - name: Upload binary using action
+        id: upload-binary
+        uses: cloudbees-io/asset-chain-utils-preprod/upload-binary@v1
+        with:
+          file-path: container-image.tar
+          file-type: BINARY_CONTAINER
+          debug: "true"
+          alias: 020229604682.dkr.ecr.us-east-1.amazonaws.com/throwaway/actions/vulnerable-image:0.1
+
+      - name: Common Step
+        uses: docker://alpine:latest
+        shell: sh
+        run: |
+          echo "Running common step under Upload binary"
