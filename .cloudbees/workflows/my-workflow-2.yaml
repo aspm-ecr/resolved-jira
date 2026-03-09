@@ -1,6 +1,6 @@
 apiVersion: automation.cloudbees.io/v1alpha1
 kind: workflow
-name: My workflow
+name: Complex Multi-Job Workflow
 
 on:
   push:
@@ -8,54 +8,159 @@ on:
       - "**"
   workflow_dispatch:
 
-permissions:
-  scm-token-own: read
-  scm-token-org: read
-  id-token: write
-
 jobs:
   build:
+    outputs:
+      version: ${{ steps.generate-version.outputs.version }}
+      artifact-name: ${{ steps.build-artifact.outputs.name }}
     steps:
-      - name: Get source code
-        uses: cloudbees-io/checkout@v1
-
-      - id: build-container
-        name: Build container image
-        uses: docker://gcr.io/kaniko-project/executor:debug
-        run: |
-          /kaniko/executor \
-            --context $CLOUDBEES_WORKSPACE \
-            --dockerfile $CLOUDBEES_WORKSPACE/Dockerfile \
-            --tar-path $CLOUDBEES_WORKSPACE/container-image.tar \
-            --no-push
-
-      - id: register-artifact
-        name: Register the artifact
-        uses: cloudbees-io/register-build-artifact@v2
-        with:
-          name: qa-go-repo
-          version: 0.1
-          url: 020229604682.dkr.ecr.us-east-1.amazonaws.com/throwaway/actions/vulnerable-image:0.1
-
-      # 👇 FIRST PARENT ACTION (creates nested steps)
-      - name: Deploy service A
-        uses: ./actions/test-deploy
-
-      # 👇 SECOND PARENT ACTION (same nested step names)
-      - name: Deploy service B
-        uses: ./actions/test-deploy
-
-      - name: Print output parameter artifact ID
-        uses: docker://alpine:latest
+      - name: Generate Version
+        id: generate-version
+        uses: docker://alpine:3.21
         shell: sh
         run: |
-          echo "artifact ID for qa-go-repo:${{ cloudbees.version }} is: ${{ steps.register-artifact.outputs.artifact-id }}"
+          VERSION="1.0.0-test-build"
+          echo "Generated version: $VERSION"
+          printf "%s" "$VERSION" > "$CLOUDBEES_OUTPUTS/version"
 
-      - id: upload-binary
-        name: Upload binary using action
-        uses: cloudbees-io/asset-chain-utils-preprod/upload-binary@v1
+      - name: Install Dependencies
+        uses: docker://alpine:3.20
+        shell: sh
+        run: |
+          echo "Installing dependencies..."
+          sleep 2
+
+      - name: Run Linting
+        uses: docker://alpine:3.20
+        shell: sh
+        run: |
+          echo "Running linting checks..."
+          sleep 1
+
+      - name: Run Unit Tests
+        uses: docker://alpine:3.20
+        shell: sh
+        run: |
+          echo "Running unit tests..."
+          echo "✓ Test suite 1: PASSED"
+          echo "✓ Test suite 2: PASSED"
+          echo "✓ Test suite 3: PASSED"
+          sleep 2
+
+      - id: build-artifact
+        name: Build Application Artifact
+        uses: docker://alpine:3.21
+        shell: sh
+        run: |
+          echo "Building artifact for version ${{ steps.generate-version.outputs.version }}..."
+          ARTIFACT_NAME="test-app-${{ steps.generate-version.outputs.version }}"
+          echo "Artifact: $ARTIFACT_NAME"
+          printf "%s" "$ARTIFACT_NAME" > "$CLOUDBEES_OUTPUTS/name"
+          sleep 2
+
+      - name: Run Security Scan
+        uses: docker://alpine:3.21
+        shell: sh
+        run: |
+          echo "Running security scan..."
+          echo "No vulnerabilities found"
+          sleep 1
+
+  integration-test:
+    needs: [build]
+    steps:
+      - name: Setup Test Environment
+        uses: docker://alpine:3.20
+        shell: sh
+        run: |
+          echo "Setting up integration test environment..."
+          echo "Using artifact: ${{ needs.build.outputs.artifact-name }}"
+          sleep 2
+
+      - name: Run Integration Tests
+        uses: docker://alpine:3.20
+        shell: sh
+        run: |
+          echo "Running integration tests..."
+          echo "✓ Integration test 1: PASSED"
+          echo "✓ Integration test 2: PASSED"
+          echo "✓ Integration test 3: PASSED"
+          sleep 3
+
+      - name: Cleanup Test Environment -test
+        uses: ./actions/cleanup-test
+        if: always()
+
+  deploy-staging:
+    needs: [build, integration-test]
+    steps:
+      - name: Generate Namespace
+        id: namespace
+        uses: docker://alpine:3.21
+        shell: sh
+        run: |
+          NAMESPACE="staging-test-12345"
+          echo "Namespace: $NAMESPACE"
+          printf "%s" "$NAMESPACE" > "$CLOUDBEES_OUTPUTS/name"
+
+      - name: Deploy to Staging
+        uses: ./actions/deploy-app
         with:
-          file-path: container-image.tar
-          file-type: BINARY_CONTAINER
-          debug: "true"
-          alias: 020229604682.dkr.ecr.us-east-1.amazonaws.com/throwaway/actions/vulnerable-image:0.1
+          environment: staging
+          namespace: ${{ steps.namespace.outputs.name }}
+          version: ${{ needs.build.outputs.version }}
+          artifact: ${{ needs.build.outputs.artifact-name }}
+          replicas: "1"
+          log-level: debug
+
+      - name: Run Smoke Tests
+        uses: docker://alpine:3.20
+        shell: sh
+        run: |
+          echo "Running smoke tests in namespace: ${{ steps.namespace.outputs.name }}..."
+          echo "✓ Health check: PASSED"
+          echo "✓ API endpoints: PASSED"
+          echo "✓ Database connectivity: PASSED"
+          sleep 2
+
+      - name: Cleanup Staging Environment
+        uses: ./actions/cleanup-staging
+        if: always()
+        with:
+          namespace: ${{ steps.namespace.outputs.name }}
+
+      - name: Cleanup Test Environment -test
+        uses: ./actions/cleanup-test
+        if: always()
+
+  deploy-production:
+    needs: [build]
+    steps:
+      - name: Deploy to Production
+        uses: ./actions/deploy-app
+        with:
+          environment: production
+          namespace: production
+          version: ${{ needs.build.outputs.version }}
+          artifact: ${{ needs.build.outputs.artifact-name }}
+          replicas: "3"
+          log-level: info
+
+      - name: Run Production Health Checks
+        uses: docker://alpine:3.21
+        shell: sh
+        run: |
+          echo "Running production health checks..."
+          echo "✓ Service health: PASSED"
+          echo "✓ Load balancer: PASSED"
+          echo "✓ Monitoring: PASSED"
+          sleep 2
+
+      - name: Notify Deployment Success
+        uses: docker://alpine:3.21
+        shell: sh
+        run: |
+          echo "🎉 Deployment successful!"
+          echo "Version: ${{ needs.build.outputs.version }}"
+          echo "Artifact: ${{ needs.build.outputs.artifact-name }}"
+          echo "Environment: production"
